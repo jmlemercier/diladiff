@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling</title>
+  <meta name="description" content="DiLaDiff is a hybrid continuous–discrete diffusion language model with a self-distilled latent that delivers 7× faster sampling than masked diffusion baselines without sacrificing quality.">
+  <meta name="author" content="Jean-Marie Lemercier">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling">
+  <meta property="og:description" content="Hybrid continuous–discrete diffusion LM with a self-distilled latent — 7× faster sampling than MDLM at higher quality.">
+  <meta property="og:image" content="assets/architecture.png">
+  <meta property="og:url" content="https://jmlemercier.github.io/diladiff/">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+  <script src="js/theme.js"></script>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+          onload="renderMathInElement(document.body, {delimiters: [
+            {left: '$$', right: '$$', display: true},
+            {left: '\\[', right: '\\]', display: true},
+            {left: '\\(', right: '\\)', display: false}
+          ], throwOnError: false});"></script>
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <a href="https://jmlemercier.github.io/" aria-label="Back to author homepage">← jmlemercier.github.io</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle color theme" aria-pressed="false">
+        <span class="moon">◐ dark</span><span class="sun">◑ light</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="container content">
+
+    <!-- ========== Hero ========== -->
+    <section class="hero">
+      <p class="venue">NeurIPS 2026 · preprint</p>
+      <h1>DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling</h1>
+
+      <p class="authors">
+        <span class="author corr">Jean-Marie Lemercier</span><span class="sep">,&nbsp;</span>
+        <span class="author">Tomas Geffner</span><span class="sep">,&nbsp;</span>
+        <span class="author">Morteza Mardani</span><span class="sep">,&nbsp;</span>
+        <span class="author">Karsten Kreis</span><span class="sep">,&nbsp;</span>
+        <span class="author">Arash Vahdat</span><span class="sep">,&nbsp;</span>
+        <span class="author">Ante Jukić</span>
+      </p>
+      <p class="affiliations">NVIDIA</p>
+
+      <!-- <div class="action-row">
+        <a class="action-btn" href="assets/DiLaDiff.pdf">paper [pdf]</a>
+      </div> -->
+
+      <div class="tldr">
+        <h3>tl;dr</h3>
+        <p>
+          Diffusion language models can&apos;t decode many tokens in parallel because they assume token independence. <strong>DiLaDiff</strong> fixes this with a continuous latent that captures token correlations, learned by a latent diffusion model and then <em>self-distilled</em> into a 5-step generative model. The result: <strong>7× wall-time speed-up</strong> over masked diffusion baselines at higher generation quality, with the latent computed in negligible time compared to discrete decoding.
+        </p>
+      </div>
+
+      <figure>
+        <img src="assets/architecture.png" alt="DiLaDiff architecture: an encoder produces a latent z, a latent denoiser models its prior with continuous diffusion (Ncont steps), and a discrete decoder samples tokens conditioned on z over Ndisc masked-diffusion steps. A self-distillation branch trains a MeanFlow student that replaces the teacher's instantaneous velocity in few-step sampling.">
+        <figcaption>
+          <b>Figure 1.</b> Hybrid continuous–discrete diffusion with a self-distilled latent. The latent space is crafted with encoder <span class="math">E<sub>ϕ</sub></span> and decoder <span class="math">x<sub>θ</sub></span>, then learned a posteriori with a diffusion process whose denoiser is <span class="math">z<sub>ψ</sub></span>. The latent trajectories are further self-distilled with a MeanFlow student <span class="math">u<sub>η</sub>(z<sub>τ</sub>, τ, r)</span>.
+        </figcaption>
+      </figure>
+    </section>
+
+    <!-- ========== Abstract ========== -->
+    <section id="abstract">
+      <h2>Abstract</h2>
+      <p class="abstract">
+        Diffusion language models intrinsically fail to capture correlations between decoded tokens, which leads to a harsh trade-off between sampling quality and throughput. To solve this issue, we propose <strong>DiLaDiff</strong>, a variant of masked diffusion language models with three components:
+        <strong>(1)</strong> a continuous latent space with semantic capabilities, learned by an auto-encoder fine-tuned from an existing masked diffusion language model;
+        <strong>(2)</strong> a latent diffusion model learning the prior over the encoder distribution;
+        <strong>(3)</strong> a consistency model distilling the learned prior into a few-step latent generative model.
+        We show that, even without distillation, our latent-guided diffusion model outperforms the masked diffusion baseline while significantly accelerating inference. Consistency distillation further lowers the computational overhead of continuous diffusion, such that the latent is generated in negligible time compared to discrete decoding.
+      </p>
+    </section>
+
+    <!-- ========== Why latents fix diffusion LMs ========== -->
+    <section id="motivation">
+      <h2>Why latents fix diffusion LMs</h2>
+
+      <h3>The problem · diffusion LMs ignore token correlations at decoding time</h3>
+      <p>
+        Auto-regressive language models are trained with teacher forcing and recover an <em>exact</em> factorization of the joint likelihood — token by token, left to right. Diffusion language models, in contrast, are trained with an ELBO that gives a <em>factorized</em> denoising posterior: each token is predicted independently from the rest of the noisy context. That factorization is exact only when you sample one token at a time. The moment the model is asked to decode several tokens in parallel, those tokens are treated as conditionally independent — but in natural language they are not.
+      </p>
+
+      <figure>
+        <img src="assets/intro/problem-1.png" alt="A denoising Transformer fills two masked positions in a sentence: 'NVIDIA sells several mostly linen items'. Two equations on the right show that the true joint distribution p_true(x0, x4 | xt) is not equal to the product of marginals, which is what the dLM factorization uses.">
+        <figcaption>
+          <b>The factorization gap.</b> Sampling two masked tokens in parallel from independent marginals produces nonsense like "NVIDIA … linen items" because the joint distribution is not separable. This mismatch is exactly the gap between the true joint <span class="math">p<sub>true</sub>(x<sub>0</sub>, x<sub>4</sub> | x<sub>t</sub>)</span> and the dLM factorization <span class="math">p<sub>true</sub>(x<sub>0</sub> | x<sub>t</sub>) · p<sub>true</sub>(x<sub>4</sub> | x<sub>t</sub>)</span>.
+        </figcaption>
+      </figure>
+
+      <p>
+        The practical consequence is a brutal speed–quality trade-off: pushing more tokens per forward pass tanks generation quality.
+      </p>
+
+      <h3>The fix · condition on a latent that absorbs the correlations</h3>
+      <p>
+        If we hand the denoiser an extra channel \(\mathbf{z}\) that already captures the joint structure of the clean sequence, then the factorized posterior becomes <em>exact</em> in expectation over \(\mathbf{z}\).
+      </p>
+
+      <ol class="prose-steps">
+        <li>
+          <strong>The conditional denoiser factorizes.</strong>
+          Conditional on the latent \(\mathbf{z}\), the clean-data denoiser truly factorizes across tokens — all token correlations have been absorbed into \(\mathbf{z}\):
+          \[ q^{\theta}(\mathbf{x}_0 \mid \mathbf{z}) \;=\; \prod_{\ell} q^{\theta}(\mathbf{x}_0^{\ell} \mid \mathbf{z}). \]
+        </li>
+        <li>
+          <strong>The forward kernel already factorizes.</strong>
+          The masking process is independent across tokens (whether a token is masked is decided context-free), so factorization is automatic — no latent required:
+          \[ q(\mathbf{x}_t \mid \mathbf{x}_s) \;=\; \prod_{\ell} q(\mathbf{x}_t^{\ell} \mid \mathbf{x}_s^{\ell}). \]
+        </li>
+        <li>
+          <strong>By Bayes, the reverse posterior factorizes too.</strong>
+          Combining the two and exploiting and exploiting the forward kernel's Markove properties yields a fully factorized reverse posterior:
+          \[ q^{\theta}_{s\mid t}(\mathbf{x}_s \mid \mathbf{x}_t, \mathbf{z}) \;=\; \prod_{\ell} q^{\theta}_{s\mid t}(\mathbf{x}_s^{\ell} \mid \mathbf{x}_t^{\ell}, \mathbf{z}). \]
+        </li>
+      </ol>
+
+      <p>
+        The caveat in step&nbsp;3 is the whole game: we now need an auto-encoder that learns a useful \(\mathbf{z}\), a generative model for sampling \(\mathbf{z}\) from scratch at inference, and a way to make that sampling fast enough not to eat the parallel-decoding gains. The next three stages each tackle one of those problems.
+      </p>
+    </section>
+
+    <!-- ========== Method walkthrough ========== -->
+    <section id="method">
+      <h2>Method walkthrough</h2>
+
+      <!-- ----- Stage 1 ----- -->
+      <h3>Stage 1 — Auto-encoding text</h3>
+      <p>
+        We craft the latent space by fine-tuning an auto-encoder on top of pre-trained contextual embeddings, with the decoder warm-started from an existing masked diffusion LM. The auto-encoder is built incrementally — scrub through to see each component drop in.
+      </p>
+
+      <div class="stepper" data-stepper aria-label="Stage 1 — auto-encoder construction" style="--stage-aspect: 1600 / 522;">
+        <div class="stepper-stage">
+          <img class="stepper-slide" src="assets/method/stage1/step-1.png" alt="Frozen contextual embedding (BERT) feeds a compressor that outputs latents z.">
+          <img class="stepper-slide" src="assets/method/stage1/step-2.png" alt="Data augmentation injected on the embeddings and on the latents to regularize the latent space.">
+          <img class="stepper-slide" src="assets/method/stage1/step-3.png" alt="A stack of self-attention layers added as the decoder, initialized from a pretrained masked diffusion language model.">
+          <img class="stepper-slide" src="assets/method/stage1/step-4.png" alt="Cross-attention layers wrap the decoder so it is guided by the latent z, completing the auto-encoder.">
+        </div>
+
+        <div class="stepper-scrub">
+          <button class="stepper-btn" type="button" data-action="prev" aria-label="Previous step">←</button>
+          <div class="stepper-track">
+            <input type="range" class="stepper-range" min="0" max="3" step="0.001" value="0"
+                   aria-label="Scrub through auto-encoder construction"
+                   aria-valuemin="1" aria-valuemax="4" aria-valuenow="1">
+            <div class="stepper-ticks" aria-hidden="true">
+              <button class="stepper-tick" type="button" data-step="0" style="--p: 0">
+                <span class="tick-mark"></span><span class="tick-label">1 · compress</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="1" style="--p: 0.3333">
+                <span class="tick-mark"></span><span class="tick-label">2 · regularize</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="2" style="--p: 0.6667">
+                <span class="tick-mark"></span><span class="tick-label">3 · decoder</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="3" style="--p: 1">
+                <span class="tick-mark"></span><span class="tick-label">4 · guidance</span>
+              </button>
+            </div>
+          </div>
+          <button class="stepper-btn" type="button" data-action="next" aria-label="Next step">→</button>
+        </div>
+
+        <div class="stepper-caption">
+          <div class="caption-slot" data-step="0">
+            <div class="step-title">1 · compress contextual embeddings</div>
+            <p>Pre-trained contextual embeddings (frozen BERT) are passed through a Perceiver-style compressor that produces a sequence of latents <span class="math">z</span> shorter than the token sequence..</p>
+          </div>
+          <div class="caption-slot" data-step="1">
+            <div class="step-title">2 · regularize with data augmentation</div>
+            <p>Without regularization the latent space is too sparse for a generative model to learn. We inject Gaussian noise on the embeddings, and random masking on both embeddings and latents, to push the auto-encoder toward a smoother, diffusion-friendly representation.</p>
+          </div>
+          <div class="caption-slot" data-step="2">
+            <div class="step-title">3 · reuse a pretrained dLM as decoder</div>
+            <p>Rather than training a decoder from scratch, we initialize the self-attention stack from a pretrained masked diffusion language model. This gives us robust token-space decoding for free and keeps the latent's job narrow: just capture global context.</p>
+          </div>
+          <div class="caption-slot" data-step="3">
+            <div class="step-title">4 · guide decoding with cross-attention</div>
+            <p>Two zero-initialized cross-attention layers wrap the decoder so its hidden state can attend to the latent <span class="math">z</span>. With latent dropout in training, the model degrades gracefully to the original dLM behaviour when no latent is provided.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ----- Stage 2 ----- -->
+      <h3>Stage 2 — Modelling the latent prior (LaDiff)</h3>
+      <p>
+        With the auto-encoder frozen, we learn the prior <span class="math">p(z)</span> with a standard continuous diffusion model trained on encoder samples. At inference, we run the probability-flow ODE in the latent space, then hand the resulting <span class="math">z</span> to the discrete decoder. We call this hybrid model <strong>LaDiff</strong>.
+      </p>
+
+      <div class="stepper" data-stepper aria-label="Stage 2 — latent prior training" style="--stage-aspect: 1500 / 540;">
+        <div class="stepper-stage">
+          <img class="stepper-slide" src="assets/method/stage2/step-1.png" alt="A frozen encoder produces a latent z from the clean sequence x.">
+          <img class="stepper-slide" src="assets/method/stage2/step-2.png" alt="The latent z is corrupted by a forward diffusion kernel into a noisy latent z_tau.">
+          <img class="stepper-slide" src="assets/method/stage2/step-3.png" alt="A learnable latent denoiser z_psi reconstructs z from z_tau under an LDM loss.">
+        </div>
+
+        <div class="stepper-scrub">
+          <button class="stepper-btn" type="button" data-action="prev" aria-label="Previous step">←</button>
+          <div class="stepper-track">
+            <input type="range" class="stepper-range" min="0" max="2" step="0.001" value="0"
+                   aria-label="Scrub through LaDiff training"
+                   aria-valuemin="1" aria-valuemax="3" aria-valuenow="1">
+            <div class="stepper-ticks" aria-hidden="true">
+              <button class="stepper-tick" type="button" data-step="0" style="--p: 0">
+                <span class="tick-mark"></span><span class="tick-label">1 · encode</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="1" style="--p: 0.5">
+                <span class="tick-mark"></span><span class="tick-label">2 · forward diffuse</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="2" style="--p: 1">
+                <span class="tick-mark"></span><span class="tick-label">3 · denoise + loss</span>
+              </button>
+            </div>
+          </div>
+          <button class="stepper-btn" type="button" data-action="next" aria-label="Next step">→</button>
+        </div>
+
+        <div class="stepper-caption">
+          <div class="caption-slot" data-step="0">
+            <div class="step-title">1 · sample a latent from the frozen encoder</div>
+            <p>The clean sequence <span class="math">x</span> is encoded into a latent <span class="math">z</span> by the frozen Stage-1 encoder <span class="math">E<sub>ϕ</sub></span>.</p>
+          </div>
+          <div class="caption-slot" data-step="1">
+            <div class="step-title">2 · diffuse with the forward kernel</div>
+            <p>A noise level <span class="math">τ</span> is sampled, and <span class="math">z</span> is perturbed to <span class="math">z<sub>τ</sub></span> with a standard Gaussian forward kernel — exactly the standard continuous diffusion setup, just in the latent space.</p>
+          </div>
+          <div class="caption-slot" data-step="2">
+            <div class="step-title">3 · train the latent denoiser</div>
+            <p>The latent denoiser <span class="math">z<sub>ψ</sub>(z<sub>τ</sub>, τ)</span> is trained to reconstruct the clean latent with an LDM <span class="math">L<sup>2</sup></span> loss. At inference we solve the reverse probability-flow ODE to draw a fresh <span class="math">z</span>, then hand it off to the discrete decoder for masked-diffusion sampling.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ----- Stage 3 ----- -->
+      <h3>Stage 3 — Self-distilling latent trajectories (DiLaDiff)</h3>
+      <p>
+        At 200 NFEs the latent diffusion alone eats most of the wall-time budget — defeating the speed-up. We distill the LaDiff teacher into a few-step student via MeanFlow. The construction has three sub-steps: identify what's wrong with one-step velocity sampling, fix it with an average-velocity correction, and train the correction by self-distillation.
+      </p>
+
+      <h4 class="sub">3.1 · limitations of one-step ODE sampling</h4>
+      <p>
+        The latent denoiser computes an <em>instantaneous velocity</em> — the tangent to the ODE trajectory. Using it for one big Euler step is fine when the step is small or the trajectory is straight, but it falls apart when both fail.
+      </p>
+
+      <div class="stepper" data-stepper aria-label="Stage 3.1 — limitations of single-step ODE sampling" style="--stage-aspect: 1400 / 425;">
+        <div class="stepper-stage">
+          <img class="stepper-slide" src="assets/method/stage3a/step-1.png" alt="A straight blue arrow representing the teacher's instantaneous velocity v_psi(z_t, t).">
+          <img class="stepper-slide" src="assets/method/stage3a/step-2.png" alt="The same velocity arrow with a small step shown to land on the ODE curve correctly.">
+          <img class="stepper-slide" src="assets/method/stage3a/step-3.png" alt="A long step along a low-curvature ODE trajectory still lands close to the target.">
+          <img class="stepper-slide" src="assets/method/stage3a/step-4.png" alt="A long step along a highly-curved ODE trajectory misses the target (red X).">
+        </div>
+
+        <div class="stepper-scrub">
+          <button class="stepper-btn" type="button" data-action="prev" aria-label="Previous step">←</button>
+          <div class="stepper-track">
+            <input type="range" class="stepper-range" min="0" max="3" step="0.001" value="0"
+                   aria-label="Scrub through ODE solver limitations"
+                   aria-valuemin="1" aria-valuemax="4" aria-valuenow="1">
+            <div class="stepper-ticks" aria-hidden="true">
+              <button class="stepper-tick" type="button" data-step="0" style="--p: 0">
+                <span class="tick-mark"></span><span class="tick-label">1 · velocity</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="1" style="--p: 0.3333">
+                <span class="tick-mark"></span><span class="tick-label">2 · small step ok</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="2" style="--p: 0.6667">
+                <span class="tick-mark"></span><span class="tick-label">3 · straight ok</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="3" style="--p: 1">
+                <span class="tick-mark"></span><span class="tick-label">4 · curved fails</span>
+              </button>
+            </div>
+          </div>
+          <button class="stepper-btn" type="button" data-action="next" aria-label="Next step">→</button>
+        </div>
+
+        <div class="stepper-caption">
+          <div class="caption-slot" data-step="0">
+            <div class="step-title">1 · the teacher's instantaneous velocity</div>
+            <p>The trained denoiser gives us <span class="math">v<sub>ψ</sub>(z<sub>t</sub>, t)</span>, the tangent to the ODE path at the current point. One Euler step follows that tangent.</p>
+          </div>
+          <div class="caption-slot" data-step="1">
+            <div class="step-title">2 · small timesteps work fine</div>
+            <p>For a small enough step <span class="math">Δt</span>, the tangent approximates the chord well and Euler sampling lands close to the true trajectory. This is the many-step regime.</p>
+          </div>
+          <div class="caption-slot" data-step="2">
+            <div class="step-title">3 · low ODE curvature also works</div>
+            <p>If the ODE path is nearly straight, even a large step along the tangent stays close to the trajectory. This is what teachers with straight probability-flow ODEs exploit.</p>
+          </div>
+          <div class="caption-slot" data-step="3">
+            <div class="step-title">4 · neither holds in few-step regimes</div>
+            <p>In the general few-step ODE sampling case, the steps are big <em>and</em> the trajectory is curved. The tangent misses the target by a wide margin — the red ✗. The single-step Euler velocity is no longer the right object to use.</p>
+          </div>
+        </div>
+      </div>
+
+      <h4 class="sub">3.2 · the MeanFlow correction</h4>
+      <p>
+        Instead of the instantaneous velocity, the student parameterizes the <em>average velocity</em> \(\mathbf{u}_\eta(\mathbf{z}_t, t, r)\) over an interval \([r, t]\) — that's the right object for a big Euler step. MeanFlow corrects the teacher's tangent with a <em>tangent term</em>, and the tangent itself is obtained by <em>self-distillation</em>: a stop-gradient through the Jacobian of the student. The training target reads
+      </p>
+      \[ \mathbf{u}_{\text{tgt}} \;=\; \mathbf{v}_\psi(\mathbf{z}_t, t) \;-\; (t - r)\,\big(\mathbf{v}_\psi(\mathbf{z}_t, t)\,\partial_{\mathbf{z}}\mathbf{u}_\eta \,+\, \partial_t \mathbf{u}_\eta\big), \]
+      <p>
+        and the student is fit with a simple regression loss
+      </p>
+      \[ \mathcal{L}_{\text{MeanFlow}}(\eta) \;=\; \mathbb{E}\;\big\|\,\mathbf{u}_\eta(\mathbf{z}_t, t, r) \;-\; \operatorname{stopgrad}(\mathbf{u}_{\text{tgt}})\,\big\|_2^2. \]
+      <p>
+        The result is a single network that can be plugged in place of the teacher's velocity for big ODE solver steps.
+      </p>
+
+      <h4 class="sub">3.3 · training the student by self-distillation</h4>
+      <p>
+        Putting it together, DiLaDiff is trained on the same encoder + forward-diffusion setup as LaDiff, with the MeanFlow loss matching the student's average velocity against the teacher-derived target.
+      </p>
+
+      <div class="stepper" data-stepper aria-label="Stage 3.3 — self-distillation training procedure" style="--stage-aspect: 1500 / 404;">
+        <div class="stepper-stage">
+          <img class="stepper-slide" src="assets/method/stage3c/step-1.png" alt="A frozen encoder produces a latent z.">
+          <img class="stepper-slide" src="assets/method/stage3c/step-2.png" alt="Forward diffusion to noise level t produces z_t from z.">
+          <img class="stepper-slide" src="assets/method/stage3c/step-3.png" alt="The frozen teacher v_psi computes the instantaneous velocity at (z_t, t).">
+          <img class="stepper-slide" src="assets/method/stage3c/step-4.png" alt="The trainable student u_eta produces an average velocity; the MeanFlow loss compares it to the teacher target.">
+        </div>
+
+        <div class="stepper-scrub">
+          <button class="stepper-btn" type="button" data-action="prev" aria-label="Previous step">←</button>
+          <div class="stepper-track">
+            <input type="range" class="stepper-range" min="0" max="3" step="0.001" value="0"
+                   aria-label="Scrub through DiLaDiff self-distillation training"
+                   aria-valuemin="1" aria-valuemax="4" aria-valuenow="1">
+            <div class="stepper-ticks" aria-hidden="true">
+              <button class="stepper-tick" type="button" data-step="0" style="--p: 0">
+                <span class="tick-mark"></span><span class="tick-label">1 · encode</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="1" style="--p: 0.3333">
+                <span class="tick-mark"></span><span class="tick-label">2 · diffuse</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="2" style="--p: 0.6667">
+                <span class="tick-mark"></span><span class="tick-label">3 · teacher</span>
+              </button>
+              <button class="stepper-tick" type="button" data-step="3" style="--p: 1">
+                <span class="tick-mark"></span><span class="tick-label">4 · student loss</span>
+              </button>
+            </div>
+          </div>
+          <button class="stepper-btn" type="button" data-action="next" aria-label="Next step">→</button>
+        </div>
+
+        <div class="stepper-caption">
+          <div class="caption-slot" data-step="0">
+            <div class="step-title">1 · sample a latent from the frozen encoder</div>
+            <p>Exactly as in Stage 2: a clean sequence <span class="math">x</span> goes through the frozen encoder <span class="math">E<sub>ϕ</sub></span> to give <span class="math">z</span>.</p>
+          </div>
+          <div class="caption-slot" data-step="1">
+            <div class="step-title">2 · pick two noise levels and diffuse to t</div>
+            <p>We pick a target noise level <span class="math">t</span> and a smaller one <span class="math">r</span>, then perturb <span class="math">z</span> to <span class="math">z<sub>t</sub></span> with the same forward kernel as LaDiff.</p>
+          </div>
+          <div class="caption-slot" data-step="2">
+            <div class="step-title">3 · query the frozen teacher</div>
+            <p>The frozen LaDiff teacher <span class="math">v<sub>ψ</sub>(z<sub>t</sub>, t)</span> provides the instantaneous velocity needed to assemble the MeanFlow target.</p>
+          </div>
+          <div class="caption-slot" data-step="3">
+            <div class="step-title">4 · train the student against the target</div>
+            <p>The student <span class="math">u<sub>η</sub>(z<sub>t</sub>, t, r)</span> is updated with the MeanFlow loss against the teacher-derived target. After 25k steps the student matches the teacher with <span class="math">N<sub>cont</sub> = 5</span> instead of 200.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== Results ========== -->
+    <section id="results">
+      <h2>Results</h2>
+
+      <!-- ----- Latent space analysis ----- -->
+      <h3>Latent space analysis</h3>
+      <p>
+        Before measuring downstream generation quality, we check that the auto-encoder's latent actually does what we asked of it: capture sentence-level semantics. We perturb a latent with Gaussian noise and decode it 8 steps, then measure semantic distance against the source.
+      </p>
+
+      <p>
+        BERTScore-F1 between sentences decoded from the same latent drops monotonically as we add noise — both against the clean source at \(t = 0\) and against the ground-truth sentence. The latent carries semantics inherited from the contextual embedding.
+      </p>
+
+      <figure>
+        <img src="assets/results/latent-1.png" alt="Semantic distance vs noise level: monotonic curves showing BERTScore-F1 drift as the latent is corrupted.">
+        <figcaption><b>Semantic distance.</b> BERTScore-F1 between decoded sentences and either the clean source (\(t=0\)) or the ground truth, as a function of the latent's noise level.</figcaption>
+      </figure>
+
+      <p>
+        Decomposing further: intra-pool sentences (decoded from the <em>same</em> latent with different seeds) stay close in BERTScore, while inter-pool sentences (different latent, same seed) drop sharply. The latent captures sentence-level meaning while the decoder contributes word-level diversity.
+      </p>
+
+      <figure>
+        <img src="assets/results/latent-2.png" alt="Two plots: the semantic-distance curve and a bar chart showing intra-pool BERTScore stays high while inter-pool drops sharply.">
+        <figcaption><b>Intra- vs inter-pool similarity.</b> Same-latent samples remain semantically close; different-latent samples diverge sharply.</figcaption>
+      </figure>
+
+      <!-- ----- LaDiff ----- -->
+      <h3>LaDiff (no distillation)</h3>
+      <p>
+        Even before distillation, conditioning the masked-diffusion decoder on a learned latent pays off. The undistilled LaDiff sits on a strictly better speed–quality Pareto frontier than MDLM, preserves diversity at low temperatures, and lets us exploit a confidence-based token selection that MDLM cannot use reliably.
+      </p>
+
+      <p>
+        <strong>LaDiff dominates the speed–quality Pareto frontier.</strong> At equal MAUVE and GenPPL, LaDiff is roughly <strong>7× faster</strong> than MDLM. At equal throughput (16 tokens per forward pass) it is also strictly better in quality.
+      </p>
+
+      <figure>
+        <img src="assets/results/ladiff-1.png" alt="Speed-quality Pareto: LaDiff dominates MDLM in both MAUVE (higher is better) and GenPPL (lower is better) across throughput regimes.">
+        <figcaption><b>Speed–quality Pareto frontier.</b> LaDiff (green) vs MDLM (orange). Higher MAUVE and lower GenPPL at the same throughput.</figcaption>
+      </figure>
+
+      <p>
+        <strong>Diversity is captured in the latent.</strong> Lowering the decoder temperature \(\zeta\) normally collapses MDLM samples — entropy and MAUVE fall off a cliff. LaDiff stays put because the latent has already absorbed sentence-level diversity, freeing the decoder temperature to do token-level sharpening.
+      </p>
+
+      <figure>
+        <img src="assets/results/ladiff-2.png" alt="Temperature sampling: LaDiff preserves MAUVE and entropy as temperature drops, while MDLM collapses.">
+        <figcaption><b>Temperature sampling.</b> MAUVE, GenPPL and Entropy as a function of the decoder temperature \(\zeta\), with \(N_{\text{cont}} = 200\).</figcaption>
+      </figure>
+
+      <p>
+        <strong>Confidence-based token selection is unlocked.</strong> Choosing which masked positions to fill in by the decoder's own confidence is unreliable for MDLM at small scales (the dashed confidence curves collapse). With LaDiff, confidence-based selection matches or beats random selection across every \(N_{\text{disc}}\).
+      </p>
+
+      <figure>
+        <img src="assets/results/ladiff-3.png" alt="Confidence-based token selection: LaDiff with confidence sampling matches its argmax curve while MDLM with confidence collapses to a low MAUVE plateau.">
+        <figcaption><b>Confidence-based vs random token selection</b>, \(N_{\text{cont}} = 200\). LaDiff (blue) survives confidence sampling; MDLM (green, dashed) does not.</figcaption>
+      </figure>
+
+      <!-- ----- DiLaDiff ----- -->
+      <h3>DiLaDiff (with self-distillation)</h3>
+      <p>
+        Self-distilling the latent denoiser removes the continuous-diffusion bottleneck. With only 5 latent steps, DiLaDiff stays on the same Pareto frontier as LaDiff at 200 steps — the latent is essentially free.
+      </p>
+
+      <p>
+        <strong>DiLaDiff matches the teacher with 40× fewer latent steps.</strong> With \(N_{\text{cont}} = 5\) latent diffusion steps, DiLaDiff hits the same Pareto frontier as the LaDiff teacher with \(N_{\text{cont}} = 200\). Latent diffusion now accounts for ~5% of the wall-time — effectively free.
+      </p>
+
+      <figure>
+        <img src="assets/results/pareto.png" alt="Speed-quality Pareto with DiLaDiff curves overlaid: DiLaDiff matches LaDiff teacher quality at much higher throughput.">
+        <figcaption><b>Pareto with distillation.</b> DiLaDiff (purple, \(N_{\text{cont}}=5\)) sits on the LaDiff teacher's frontier (green, \(N_{\text{cont}}=200\)) and far above MDLM.</figcaption>
+      </figure>
+
+      <p>
+        <strong>MeanFlow and Terminal Velocity Matching agree.</strong> The MeanFlow correction and Terminal Velocity Matching give nearly identical curves across MAUVE, GenPPL, and Entropy as \(N_{\text{cont}}\) sweeps from 5 to 200. Both clearly outperform the dashed teacher curve at the small-\(N_{\text{cont}}\) end.
+      </p>
+
+      <figure>
+        <img src="assets/results/distillation.png" alt="Three plots (MAUVE, GenPPL, Entropy) comparing MeanFlow and Terminal Velocity Matching distillation across Ncont; both match the teacher with only 5 steps.">
+        <figcaption><b>MeanFlow vs Terminal Velocity Matching.</b> Two noise schedules each (LogitNormal(-1,1) and (-1,2)) compared against the teacher across the latent NFE sweep.</figcaption>
+      </figure>
+
+      <ul class="highlights">
+        <li><strong>7× wall-time speed-up</strong> over MDLM at the optimal settings, while improving GenPPL by 22.2 absolute (24.5% relative) and MAUVE by 0.035 (4% relative).</li>
+        <li><strong>Negligible latent overhead</strong> after distillation: DiLaDiff with <code>Ncont=5, Ndisc=64</code> spends only 5% of wall-time on continuous diffusion (vs 111% for undistilled LaDiff).</li>
+        <li><strong>Semantic latent</strong>: BERTScore-F1 between sentences decoded from the same latent stays high under perturbation, but drops for different latents — the latent really captures sentence-level meaning.</li>
+        <li><strong>Robust temperature sampling</strong>: LaDiff preserves entropy when lowering the decoder temperature, because diversity is already captured in the latent.</li>
+      </ul>
+    </section>
+
+    <!-- ========== Citation ========== -->
+    <section id="bibtex">
+      <h2>Citation</h2>
+<pre><code>@article{lemercier2026diladiff,
+  title   = {DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling},
+  author  = {Lemercier, Jean-Marie and Geffner, Tomas and Mardani, Morteza
+             and Kreis, Karsten and Vahdat, Arash and Juki{\'c}, Ante},
+  journal = {arXiv preprint},
+  year    = {2026}
+}</code></pre>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>
+        Project page for <a href="assets/DiLaDiff.pdf">DiLaDiff</a> by
+        <a href="https://jmlemercier.github.io/">Jean-Marie Lemercier</a> et al.
+        Last update: May 2026.
+      </p>
+    </div>
+  </footer>
+
+  <script src="js/stepper.js"></script>
+</body>
+</html>
