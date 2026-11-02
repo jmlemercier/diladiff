@@ -52,3 +52,19 @@ with `pdftoppm -r 220` and crop the bottom NVIDIA-confidential strip
 
 This is a vanilla `username.github.io/<repo>` GitHub Pages site. Push `main` to
 `github.com/jmlemercier/diladiff` and enable Pages → "Deploy from a branch" → `main` / `/ (root)`.
+
+## Rebuttal figure refresh (November 2026)
+
+The selected archive figures replace the slide screenshots in `assets/results/`:
+
+| Website asset | Archived source PNG |
+| --- | --- |
+| `ladiff-1.png` | `diladiff_bs1_two_panel_linear_throughput.png` |
+| `ladiff-2.png` | `diladiff_temperature_nucleus_consistent.png` |
+| `ladiff-3.png` | `diladiff_confidence_sampling_consistent.png` |
+| `pareto.png` | `diladiff_paper_two_panel_linear_throughput.png` |
+
+Source package: `diladiff-final-archive/figures/` in the paper handoff archive.
+The figures share MDLM orange circles, LaDiff green triangles, and DiLaDiff purple diamonds. GenPPL axes are inverted. Throughput coordinates were reconstructed from the supplied/published figures; they are not raw timing records. The eight MDLM confidence points were reconstructed from published Figure 9; the other 24 confidence-comparison points match saved metrics. The source Figure 9 caption reports Ncont=200 while matched LaDiff configs store 100 solver steps; continuous-NFE counting remains unverified, so the website caption omits this ambiguous count.
+
+The prior slide-based instructions above continue to apply to the unchanged architecture, method, latent-space, and distillation figures.
