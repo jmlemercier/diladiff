@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling</title>
-  <meta name="description" content="DiLaDiff is a hybrid continuous–discrete diffusion language model with a self-distilled latent that delivers 7× faster sampling than masked diffusion baselines without sacrificing quality.">
+  <meta name="description" content="DiLaDiff is a hybrid continuous–discrete diffusion language model with a self-distilled latent that delivers 3-7× faster sampling than masked diffusion baselines without sacrificing quality.">
   <meta name="author" content="Jean-Marie Lemercier">
 
   <meta property="og:type" content="article">
   <meta property="og:title" content="DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling">
-  <meta property="og:description" content="Hybrid continuous–discrete diffusion LM with a self-distilled latent — 7× faster sampling than MDLM at higher quality.">
+  <meta property="og:description" content="Hybrid continuous–discrete diffusion LM with a self-distilled latent — 3-7× faster sampling than MDLM at higher quality.">
   <meta property="og:image" content="assets/architecture.png">
   <meta property="og:url" content="https://jmlemercier.github.io/diladiff/">
 
@@ -64,7 +64,7 @@
       <div class="tldr">
         <h3>tl;dr</h3>
         <p>
-          Diffusion language models can&apos;t decode many tokens in parallel because they assume token independence. <strong>DiLaDiff</strong> fixes this with a continuous latent that captures token correlations, learned by a latent diffusion model and then <em>self-distilled</em> into a 5-step generative model. The result: <strong>7× wall-time speed-up</strong> over masked diffusion baselines at higher generation quality, with the latent computed in negligible time compared to discrete decoding.
+          Diffusion language models can&apos;t decode many tokens in parallel because they assume token independence. <strong>DiLaDiff</strong> fixes this with a continuous latent that captures token correlations, learned by a latent diffusion model and then <em>self-distilled</em> into a 5-step generative model. The result: <strong>3-7× wall-time speed-up</strong> over masked diffusion baselines at higher generation quality, with the latent computed in negligible time compared to discrete decoding.
         </p>
       </div>
 
@@ -417,7 +417,7 @@
       </p>
 
       <p>
-        <strong>LaDiff dominates the speed–quality Pareto frontier.</strong> At equal MAUVE and GenPPL, LaDiff is roughly <strong>7× faster</strong> than MDLM. At equal throughput (16 tokens per forward pass) it is also strictly better in quality.
+        <strong>LaDiff dominates the speed–quality Pareto frontier.</strong> At equal MAUVE and GenPPL, LaDiff is roughly <strong>3-7× faster</strong> than MDLM. At equal throughput (16 tokens per forward pass) it is also strictly better in quality.
       </p>
 
       <figure>
@@ -468,7 +468,7 @@
       </figure>
 
       <ul class="highlights">
-        <li><strong>7× wall-time speed-up</strong> over MDLM at the optimal settings, while improving GenPPL by 22.2 absolute (24.5% relative) and MAUVE by 0.035 (4% relative).</li>
+        <li><strong>3-7× wall-time speed-up</strong> over MDLM at the optimal settings, while improving GenPPL by 22.2 absolute (24.5% relative) and MAUVE by 0.035 (4% relative).</li>
         <li><strong>Negligible latent overhead</strong> after distillation: DiLaDiff with <code>Ncont=5, Ndisc=64</code> spends only 5% of wall-time on continuous diffusion (vs 111% for undistilled LaDiff).</li>
         <li><strong>Semantic latent</strong>: BERTScore-F1 between sentences decoded from the same latent stays high under perturbation, but drops for different latents — the latent really captures sentence-level meaning.</li>
         <li><strong>Robust temperature sampling</strong>: LaDiff preserves entropy when lowering the decoder temperature, because diversity is already captured in the latent.</li>
@@ -482,7 +482,7 @@
   title   = {DiLaDiff: Distilled Latent-Augmented Diffusion for Language Modeling},
   author  = {Lemercier, Jean-Marie and Geffner, Tomas and Mardani, Morteza
              and Kreis, Karsten and Vahdat, Arash and Juki{\'c}, Ante},
-  journal = {arXiv preprint},
+  journal = {NeurIPS},
   year    = {2026}
 }</code></pre>
     </section>
